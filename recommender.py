@@ -35,23 +35,27 @@ def cosine(left, right):
     return sum(value * right.get(key, 0) for key, value in left.items())
 
 
-def product_vectors(catalog):
-    counts = {
-        item: Counter(re.findall(r"[a-z0-9]+", text.lower()))
-        for item, text in catalog.items()
-    }
-    document_frequency = Counter(word for terms in counts.values() for word in terms)
+def tfidf_vectors(documents):
+    """Build a unit vector for each document from its term counts."""
+    document_frequency = Counter(term for counts in documents.values() for term in counts)
     idf = {
-        word: 1 + math.log((1 + len(counts)) / (1 + frequency))
-        for word, frequency in document_frequency.items()
+        term: 1 + math.log((1 + len(documents)) / (1 + frequency))
+        for term, frequency in document_frequency.items()
     }
     return {
-        item: normalize({
-            word: (1 + math.log(count)) * idf[word]
-            for word, count in terms.items()
+        document: normalize({
+            term: (1 + math.log(count)) * idf[term]
+            for term, count in counts.items()
         })
-        for item, terms in counts.items()
+        for document, counts in documents.items()
     }
+
+
+def product_vectors(catalog):
+    return tfidf_vectors({
+        item: Counter(re.findall(r"[a-z0-9]+", text.lower()))
+        for item, text in catalog.items()
+    })
 
 
 class Recommender:
@@ -63,9 +67,8 @@ class Recommender:
             user, item = row["user_id"], row["product_id"]
             self.histories[user][item] += 1
             self.popularity[item] += 1
-        self.user_vectors = {
-            user: normalize(history) for user, history in self.histories.items()
-        }
+        # Each shopper is a document and each purchased product ID is a term.
+        self.user_vectors = tfidf_vectors(self.histories)
         self.buyers_by_product = defaultdict(list)
         for user, vector in self.user_vectors.items():
             for item, strength in vector.items():
