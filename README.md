@@ -13,6 +13,19 @@ python3 recommender.py recommend new-shopper --limit 3
 
 `U16` bought trail running shoes. Their top three recommendations are a sports water bottle, running socks, and a running belt. For `new-shopper`, the most frequently purchased item comes first.
 
+## Web demo
+
+From the project directory, install Streamlit in a virtual environment and start the app.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m streamlit run app.py
+```
+
+Open the local URL printed in the terminal. Choose a shopper to see their purchase history and top three recommendations, or select **New shopper** to see the popularity fallback.
+
 ## How ranking works
 
 - **Collaborative filtering** finds shoppers who bought at least one of the same products, using an index of buyers by product. Shoppers with more similar purchase histories contribute more to each candidate’s score.

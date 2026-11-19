@@ -11,6 +11,21 @@ from pathlib import Path
 DATA = Path(__file__).resolve().parent / "data"
 
 
+def load_data(products_path=DATA / "products.csv", purchases_path=DATA / "purchases.csv"):
+    with products_path.open(newline="", encoding="utf-8") as source:
+        products = {row["product_id"]: row for row in csv.DictReader(source)}
+    with purchases_path.open(newline="", encoding="utf-8") as source:
+        purchases = list(csv.DictReader(source))
+    missing = {row["product_id"] for row in purchases} - products.keys()
+    if missing:
+        raise ValueError(f"unknown product IDs in purchases: {', '.join(sorted(missing))}")
+    catalog = {
+        item: " ".join(row[field] for field in ("name", "category", "description"))
+        for item, row in products.items()
+    }
+    return products, catalog, purchases
+
+
 def normalize(vector):
     length = math.sqrt(sum(value * value for value in vector.values()))
     return {key: value / length for key, value in vector.items()} if length else {}
@@ -177,28 +192,18 @@ def main():
     if args.command == "recommend" and not 0 <= args.weight <= 1:
         parser.error("--weight must be between 0 and 1")
 
-    with args.products.open(newline="", encoding="utf-8") as source:
-        products = {row["product_id"]: row for row in csv.DictReader(source)}
-    catalog = {
-        item: " ".join(row[field] for field in ("name", "category", "description"))
-        for item, row in products.items()
-    }
-    with args.purchases.open(newline="", encoding="utf-8") as source:
-        purchases = list(csv.DictReader(source))
-    if missing := {row["product_id"] for row in purchases} - products.keys():
-        parser.error(f"unknown product IDs in purchases: {', '.join(sorted(missing))}")
-
-    if args.command == "evaluate":
-        try:
+    try:
+        products, catalog, purchases = load_data(args.products, args.purchases)
+        if args.command == "evaluate":
             for row in purchases:
                 row["date"] = date.fromisoformat(row["date"])
             benchmark(catalog, purchases, args.limit)
-        except ValueError as error:
-            parser.error(str(error))
-    else:
-        model = Recommender(catalog, purchases)
-        for item, score, reason in model.recommend(args.user, args.limit, args.weight):
-            print(f"{item:>4}  {products[item]['name']:<24}  {score:.4f}  {reason}")
+            return
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    model = Recommender(catalog, purchases)
+    for item, score, reason in model.recommend(args.user, args.limit, args.weight):
+        print(f"{item:>4}  {products[item]['name']:<24}  {score:.4f}  {reason}")
 
 
 if __name__ == "__main__":
