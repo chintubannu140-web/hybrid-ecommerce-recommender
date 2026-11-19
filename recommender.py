@@ -11,6 +11,21 @@ from pathlib import Path
 DATA = Path(__file__).resolve().parent / "data"
 
 
+def load_data(products_path=DATA / "products.csv", purchases_path=DATA / "purchases.csv"):
+    with products_path.open(newline="", encoding="utf-8") as source:
+        products = {row["product_id"]: row for row in csv.DictReader(source)}
+    with purchases_path.open(newline="", encoding="utf-8") as source:
+        purchases = list(csv.DictReader(source))
+    missing = {row["product_id"] for row in purchases} - products.keys()
+    if missing:
+        raise ValueError(f"unknown product IDs in purchases: {', '.join(sorted(missing))}")
+    catalog = {
+        item: " ".join(row[field] for field in ("name", "category", "description"))
+        for item, row in products.items()
+    }
+    return products, catalog, purchases
+
+
 def normalize(vector):
     length = math.sqrt(sum(value * value for value in vector.values()))
     return {key: value / length for key, value in vector.items()} if length else {}
@@ -20,23 +35,27 @@ def cosine(left, right):
     return sum(value * right.get(key, 0) for key, value in left.items())
 
 
-def product_vectors(catalog):
-    counts = {
-        item: Counter(re.findall(r"[a-z0-9]+", text.lower()))
-        for item, text in catalog.items()
-    }
-    document_frequency = Counter(word for terms in counts.values() for word in terms)
+def tfidf_vectors(documents):
+    """Build a unit vector for each document from its term counts."""
+    document_frequency = Counter(term for counts in documents.values() for term in counts)
     idf = {
-        word: 1 + math.log((1 + len(counts)) / (1 + frequency))
-        for word, frequency in document_frequency.items()
+        term: 1 + math.log((1 + len(documents)) / (1 + frequency))
+        for term, frequency in document_frequency.items()
     }
     return {
-        item: normalize({
-            word: (1 + math.log(count)) * idf[word]
-            for word, count in terms.items()
+        document: normalize({
+            term: (1 + math.log(count)) * idf[term]
+            for term, count in counts.items()
         })
-        for item, terms in counts.items()
+        for document, counts in documents.items()
     }
+
+
+def product_vectors(catalog):
+    return tfidf_vectors({
+        item: Counter(re.findall(r"[a-z0-9]+", text.lower()))
+        for item, text in catalog.items()
+    })
 
 
 class Recommender:
@@ -48,9 +67,8 @@ class Recommender:
             user, item = row["user_id"], row["product_id"]
             self.histories[user][item] += 1
             self.popularity[item] += 1
-        self.user_vectors = {
-            user: normalize(history) for user, history in self.histories.items()
-        }
+        # Each shopper is a document and each purchased product ID is a term.
+        self.user_vectors = tfidf_vectors(self.histories)
         self.buyers_by_product = defaultdict(list)
         for user, vector in self.user_vectors.items():
             for item, strength in vector.items():
@@ -177,28 +195,18 @@ def main():
     if args.command == "recommend" and not 0 <= args.weight <= 1:
         parser.error("--weight must be between 0 and 1")
 
-    with args.products.open(newline="", encoding="utf-8") as source:
-        products = {row["product_id"]: row for row in csv.DictReader(source)}
-    catalog = {
-        item: " ".join(row[field] for field in ("name", "category", "description"))
-        for item, row in products.items()
-    }
-    with args.purchases.open(newline="", encoding="utf-8") as source:
-        purchases = list(csv.DictReader(source))
-    if missing := {row["product_id"] for row in purchases} - products.keys():
-        parser.error(f"unknown product IDs in purchases: {', '.join(sorted(missing))}")
-
-    if args.command == "evaluate":
-        try:
+    try:
+        products, catalog, purchases = load_data(args.products, args.purchases)
+        if args.command == "evaluate":
             for row in purchases:
                 row["date"] = date.fromisoformat(row["date"])
             benchmark(catalog, purchases, args.limit)
-        except ValueError as error:
-            parser.error(str(error))
-    else:
-        model = Recommender(catalog, purchases)
-        for item, score, reason in model.recommend(args.user, args.limit, args.weight):
-            print(f"{item:>4}  {products[item]['name']:<24}  {score:.4f}  {reason}")
+            return
+    except (OSError, ValueError) as error:
+        parser.error(str(error))
+    model = Recommender(catalog, purchases)
+    for item, score, reason in model.recommend(args.user, args.limit, args.weight):
+        print(f"{item:>4}  {products[item]['name']:<24}  {score:.4f}  {reason}")
 
 
 if __name__ == "__main__":
